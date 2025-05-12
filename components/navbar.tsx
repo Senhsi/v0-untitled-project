@@ -1,138 +1,116 @@
 "use client"
 
-import Link from "next/link"
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Menu, X } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { ModeToggle } from "@/components/mode-toggle"
 import { useAuth } from "@/context/auth-context"
-import { useRouter } from "next/navigation"
+import { UserAvatar } from "@/components/user-avatar"
+import { NotificationsMenu } from "@/components/notifications"
 
-export default function Navbar() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false)
+export function Navbar() {
   const { user, logout } = useAuth()
-  const router = useRouter()
   const pathname = usePathname()
+  const [isScrolled, setIsScrolled] = useState(false)
 
-  // Close mobile menu when route changes
+  // Handle scroll event to change navbar style
   useEffect(() => {
-    setIsMenuOpen(false)
-  }, [pathname])
-
-  const handleLogout = () => {
-    logout()
-    router.push("/")
-  }
-
-  // Helper function to determine if a link is active
-  const isActive = (path: string) => {
-    if (path === "/") {
-      return pathname === path
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 10)
     }
-    return pathname.startsWith(path)
-  }
-
-  // Navigation links configuration
-  const navLinks = [
-    { href: "/restaurants", label: "Restaurants" },
-    { href: "/about", label: "About" },
-    { href: "/contact", label: "Contact" },
-  ]
+    window.addEventListener("scroll", handleScroll)
+    return () => window.removeEventListener("scroll", handleScroll)
+  }, [])
 
   return (
-    <header className="px-4 lg:px-6 h-16 flex items-center border-b sticky top-0 z-50 bg-background">
-      <Link className="flex items-center justify-center" href="/">
-        <span className="font-bold text-xl">TableReserve</span>
-      </Link>
-      <nav className="ml-auto flex gap-4 sm:gap-6 items-center">
-        <div className="hidden md:flex gap-6">
-          {navLinks.map((link) => (
+    <header
+      className={`sticky top-0 z-50 w-full transition-all duration-200 ${
+        isScrolled ? "bg-background/80 backdrop-blur-md shadow-sm" : "bg-background"
+      }`}
+    >
+      <div className="container flex h-16 items-center justify-between">
+        <div className="flex items-center gap-6">
+          <Link href="/" className="flex items-center gap-2">
+            <span className="text-xl font-bold">TableSpot</span>
+          </Link>
+          <nav className="hidden md:flex gap-6">
             <Link
-              key={link.href}
-              className={`text-sm font-medium hover:underline underline-offset-4 ${
-                isActive(link.href) ? "text-primary underline" : ""
+              href="/restaurants"
+              className={`text-sm font-medium transition-colors hover:text-primary ${
+                pathname === "/restaurants" ? "text-primary" : "text-muted-foreground"
               }`}
-              href={link.href}
             >
-              {link.label}
+              Restaurants
             </Link>
-          ))}
+            {user && (
+              <Link
+                href="/dashboard"
+                className={`text-sm font-medium transition-colors hover:text-primary ${
+                  pathname?.startsWith("/dashboard") ? "text-primary" : "text-muted-foreground"
+                }`}
+              >
+                Dashboard
+              </Link>
+            )}
+          </nav>
         </div>
-        <div className="hidden md:flex gap-2">
+        <div className="flex items-center gap-2">
           {user ? (
             <>
-              <Link href="/dashboard">
-                <Button variant={isActive("/dashboard") ? "default" : "outline"}>Dashboard</Button>
-              </Link>
-              <Button onClick={handleLogout}>Log Out</Button>
+              <NotificationsMenu />
+              <ModeToggle />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                    <UserAvatar user={user} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56" align="end" forceMount>
+                  <DropdownMenuLabel className="font-normal">
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium leading-none">{user.name}</p>
+                      <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/dashboard">Dashboard</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/dashboard/profile">Profile</Link>
+                  </DropdownMenuItem>
+                  {user.userType === "restaurant" && (
+                    <DropdownMenuItem asChild>
+                      <Link href="/dashboard/restaurant-profile">Restaurant Profile</Link>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={logout}>Log out</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           ) : (
             <>
-              <Link href="/login">
-                <Button variant={isActive("/login") ? "default" : "outline"}>Log In</Button>
-              </Link>
-              <Link href="/register">
-                <Button variant={isActive("/register") ? "default" : "secondary"}>Sign Up</Button>
-              </Link>
+              <ModeToggle />
+              <Button asChild variant="outline" size="sm">
+                <Link href="/login">Log in</Link>
+              </Button>
+              <Button asChild size="sm">
+                <Link href="/register">Sign up</Link>
+              </Button>
             </>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="md:hidden"
-          onClick={() => setIsMenuOpen(!isMenuOpen)}
-          aria-label={isMenuOpen ? "Close menu" : "Open menu"}
-          aria-expanded={isMenuOpen}
-        >
-          {isMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-          <span className="sr-only">Toggle menu</span>
-        </Button>
-      </nav>
-      {isMenuOpen && (
-        <div className="absolute top-16 left-0 right-0 bg-background border-b z-50 md:hidden">
-          <nav className="flex flex-col gap-4 p-4">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                className={`text-sm font-medium hover:underline underline-offset-4 ${
-                  isActive(link.href) ? "text-primary underline" : ""
-                }`}
-                href={link.href}
-              >
-                {link.label}
-              </Link>
-            ))}
-            <div className="flex flex-col gap-2 mt-2">
-              {user ? (
-                <>
-                  <Link href="/dashboard">
-                    <Button variant={isActive("/dashboard") ? "default" : "outline"} className="w-full">
-                      Dashboard
-                    </Button>
-                  </Link>
-                  <Button onClick={handleLogout} className="w-full">
-                    Log Out
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Link href="/login">
-                    <Button variant={isActive("/login") ? "default" : "outline"} className="w-full">
-                      Log In
-                    </Button>
-                  </Link>
-                  <Link href="/register">
-                    <Button variant={isActive("/register") ? "default" : "secondary"} className="w-full">
-                      Sign Up
-                    </Button>
-                  </Link>
-                </>
-              )}
-            </div>
-          </nav>
-        </div>
-      )}
+      </div>
     </header>
   )
 }

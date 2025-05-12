@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { connectToDatabase, toObjectId } from "@/lib/db"
 import { verifyToken } from "@/lib/auth"
+import { emitToRestaurantOwner } from "@/lib/socket-server"
 
 export async function GET(request: Request) {
   try {
@@ -130,13 +131,23 @@ export async function POST(request: Request) {
 
     const result = await reservationCollection.insertOne(reservation)
 
-    return NextResponse.json(
-      {
-        ...reservation,
-        _id: result.insertedId.toString(),
-      },
-      { status: 201 },
-    )
+    const newReservation = {
+      ...reservation,
+      _id: result.insertedId.toString(),
+    }
+
+    // Get customer details for notification
+    const userCollection = db.collection("users")
+    const customer = await userCollection.findOne({ _id: toObjectId(decoded.userId) })
+
+    // Emit WebSocket event to restaurant owner
+    emitToRestaurantOwner(restaurant.ownerId, "new_reservation", {
+      ...newReservation,
+      restaurantName: restaurant.name,
+      customerName: customer ? customer.name : "Unknown Customer",
+    })
+
+    return NextResponse.json(newReservation, { status: 201 })
   } catch (error: any) {
     console.error("Error creating reservation:", error)
     return NextResponse.json({ error: error.message || "Failed to create reservation" }, { status: 500 })

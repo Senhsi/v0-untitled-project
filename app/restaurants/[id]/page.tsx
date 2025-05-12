@@ -9,10 +9,11 @@ import { Badge } from "@/components/ui/badge"
 import { MapPin, Phone, Clock, Star, Calendar, Heart, Check, X } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useAuth } from "@/context/auth-context"
-import { getWithAuth, postWithAuth } from "@/lib/api-utils"
 import { ReviewList } from "@/components/review-list"
 import { ReviewForm } from "@/components/review-form"
 import { BackButton } from "@/components/back-button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useApi, useMutation } from "@/hooks/use-api"
 import type { Restaurant } from "@/lib/db"
 
 export default function RestaurantPage() {
@@ -21,17 +22,26 @@ export default function RestaurantPage() {
   const searchParams = useSearchParams()
   const id = params.id as string
   const { toast } = useToast()
-  const { user, token } = useAuth()
-  const [restaurant, setRestaurant] = useState<Restaurant | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [isFavorite, setIsFavorite] = useState(false)
-  const [isAddingToFavorites, setIsAddingToFavorites] = useState(false)
+  const { user } = useAuth()
   const [showReviewForm, setShowReviewForm] = useState(false)
+  const [isFavorite, setIsFavorite] = useState(false)
   const reservationRef = useRef<HTMLDivElement>(null)
 
   // Get the active tab from URL or default to "menu"
   const defaultTab = searchParams.get("tab") || "menu"
   const [activeTab, setActiveTab] = useState(defaultTab)
+
+  // Fetch restaurant data
+  const { data: restaurant, isLoading, error, refetch } = useApi<Restaurant>(`/api/restaurants/${id}`)
+
+  // Check if restaurant is in favorites
+  const { data: favorites, refetch: refetchFavorites } = useApi<any[]>("/api/favorites", {
+    requireAuth: true,
+    onError: () => {}, // Suppress error toast for unauthenticated users
+  })
+
+  // Add to favorites mutation
+  const { mutate: addToFavorites, isLoading: isAddingToFavorites } = useMutation("/api/favorites")
 
   // Scroll to reservation section if hash is present
   useEffect(() => {
@@ -46,46 +56,16 @@ export default function RestaurantPage() {
     router.push(`/restaurants/${id}?tab=${value}`, { scroll: false })
   }
 
+  // Check if restaurant is in favorites
   useEffect(() => {
-    const fetchRestaurant = async () => {
-      setIsLoading(true)
-      try {
-        // Fetch restaurant details
-        const response = await fetch(`/api/restaurants/${id}`)
-        if (!response.ok) {
-          throw new Error("Failed to fetch restaurant")
-        }
-        const data = await response.json()
-        setRestaurant(data)
-
-        // Check if restaurant is in user's favorites
-        if (user && token && user.userType === "customer") {
-          try {
-            const favorites = await getWithAuth("/api/favorites")
-            setIsFavorite(favorites.some((fav: any) => fav.restaurantId === id))
-          } catch (error) {
-            console.error("Error checking favorites:", error)
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching restaurant:", error)
-        toast({
-          title: "Error",
-          description: "Failed to load restaurant details",
-          variant: "destructive",
-        })
-      } finally {
-        setIsLoading(false)
-      }
+    if (favorites && id) {
+      const isFav = favorites.some((fav: any) => fav.restaurantId === id)
+      setIsFavorite(isFav)
     }
-
-    if (id) {
-      fetchRestaurant()
-    }
-  }, [id, user, token, toast])
+  }, [favorites, id])
 
   const handleAddToFavorites = async () => {
-    if (!user || !token) {
+    if (!user) {
       toast({
         title: "Authentication Required",
         description: "Please log in to add restaurants to favorites",
@@ -94,46 +74,70 @@ export default function RestaurantPage() {
       return
     }
 
-    setIsAddingToFavorites(true)
-    try {
-      await postWithAuth("/api/favorites", { restaurantId: id })
+    const result = await addToFavorites({ restaurantId: id })
+    if (result) {
       setIsFavorite(true)
-      toast({
-        title: "Success",
-        description: "Restaurant added to favorites",
-      })
-    } catch (error) {
-      console.error("Error adding to favorites:", error)
-      toast({
-        title: "Error",
-        description: "Failed to add restaurant to favorites",
-        variant: "destructive",
-      })
-    } finally {
-      setIsAddingToFavorites(false)
+      refetchFavorites()
     }
   }
 
   const handleReviewSubmit = () => {
     setShowReviewForm(false)
-    // Refresh the page to show the new review
-    window.location.reload()
+    refetch() // Refresh restaurant data to update rating
   }
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      <div className="container py-8">
+        <BackButton href="/restaurants" label="Back to Restaurants" />
+
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <div className="mb-6">
+              <Skeleton className="aspect-video w-full rounded-lg" />
+            </div>
+
+            <div className="mb-6">
+              <Skeleton className="h-10 w-3/4 mb-4" />
+              <Skeleton className="h-4 w-full mb-2" />
+              <Skeleton className="h-4 w-full mb-2" />
+              <Skeleton className="h-4 w-3/4 mb-4" />
+
+              <div className="flex flex-wrap gap-2 mb-4">
+                {[...Array(4)].map((_, i) => (
+                  <Skeleton key={i} className="h-6 w-20 rounded-full" />
+                ))}
+              </div>
+            </div>
+
+            <Skeleton className="h-10 w-full mb-6" />
+
+            <div className="space-y-4">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <Skeleton className="h-6 w-1/3" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <Skeleton className="h-[400px] w-full rounded-lg" />
+          </div>
+        </div>
       </div>
     )
   }
 
-  if (!restaurant) {
+  if (error || !restaurant) {
     return (
       <div className="container py-8 text-center">
         <h1 className="text-2xl font-bold mb-4">Restaurant not found</h1>
         <p className="text-muted-foreground mb-6">
-          The restaurant you're looking for doesn't exist or has been removed.
+          {error?.message || "The restaurant you're looking for doesn't exist or has been removed."}
         </p>
         <Button asChild>
           <a href="/restaurants">Browse Restaurants</a>
@@ -366,7 +370,7 @@ export default function RestaurantPage() {
                   </select>
                 </div>
                 <Button className="w-full">Book Now</Button>
-                {user && token && user.userType === "customer" && (
+                {user && user.userType === "customer" && (
                   <Button
                     variant="outline"
                     className="w-full flex items-center justify-center"

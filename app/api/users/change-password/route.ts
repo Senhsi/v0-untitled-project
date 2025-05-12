@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { connectToDatabase, toObjectId } from "@/lib/db"
 import { getAuthUser, handleApiError } from "@/lib/api-utils"
-import { hash, compare } from "bcrypt"
+import { hash, compare } from "bcryptjs" // Changed from bcrypt to bcryptjs
 
 export async function POST(req: NextRequest) {
   try {

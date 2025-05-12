@@ -3,8 +3,9 @@ import GoogleProvider from "next-auth/providers/google"
 import CredentialsProvider from "next-auth/providers/credentials"
 import { connectToDatabase } from "@/lib/db"
 import { compare } from "bcryptjs"
+import type { NextAuthOptions } from "next-auth"
 
-export const authOptions = {
+export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -38,6 +39,7 @@ export const authOptions = {
           id: user._id.toString(),
           name: user.name,
           email: user.email,
+          image: user.profileImage,
           userType: user.userType,
         }
       },
@@ -45,43 +47,47 @@ export const authOptions = {
   ],
   callbacks: {
     async jwt({ token, user, account }) {
-      // Initial sign in
-      if (account && user) {
-        // For Google sign-in, check if user exists in our database
-        if (account.provider === "google") {
-          const { db } = await connectToDatabase()
-          const existingUser = await db.collection("users").findOne({ email: user.email })
+      if (user) {
+        token.userId = user.id
+        token.userType = user.userType
+      }
 
-          if (existingUser) {
-            // User exists, update token with user data
-            token.id = existingUser._id.toString()
-            token.userType = existingUser.userType
-          } else {
-            // Create new user in our database
-            const newUser = {
-              name: user.name,
-              email: user.email,
-              userType: "customer", // Default to customer for Google sign-ins
-              createdAt: new Date(),
-              googleId: user.id,
-            }
+      // If it's a Google sign-in, check if the user exists or create a new one
+      if (account?.provider === "google") {
+        const { db } = await connectToDatabase()
+        const existingUser = await db.collection("users").findOne({ email: token.email })
 
-            const result = await db.collection("users").insertOne(newUser)
-            token.id = result.insertedId.toString()
-            token.userType = "customer"
+        if (existingUser) {
+          // Update the token with the existing user's data
+          token.userId = existingUser._id.toString()
+          token.userType = existingUser.userType
+
+          // Update the user's Google profile image if it changed
+          if (token.picture && token.picture !== existingUser.profileImage) {
+            await db.collection("users").updateOne({ _id: existingUser._id }, { $set: { profileImage: token.picture } })
           }
         } else {
-          // For credentials sign-in
-          token.id = user.id
-          token.userType = user.userType
+          // Create a new user
+          const newUser = {
+            name: token.name,
+            email: token.email,
+            profileImage: token.picture,
+            userType: "customer", // Default to customer for Google sign-ins
+            createdAt: new Date(),
+          }
+
+          const result = await db.collection("users").insertOne(newUser)
+          token.userId = result.insertedId.toString()
+          token.userType = "customer"
         }
       }
+
       return token
     },
     async session({ session, token }) {
       if (token) {
-        session.user.id = token.id
-        session.user.userType = token.userType
+        session.user.userId = token.userId as string
+        session.user.userType = token.userType as string
       }
       return session
     },
@@ -98,5 +104,4 @@ export const authOptions = {
 }
 
 const handler = NextAuth(authOptions)
-
 export { handler as GET, handler as POST }

@@ -1,14 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Star, ThumbsUp, Flag, CheckCircle2, XCircle, Clock, ChevronDown, ChevronUp, Filter } from "lucide-react"
-import { useToast } from "@/components/ui/use-toast"
 import { useAuth } from "@/context/auth-context"
 import { Badge } from "@/components/ui/badge"
-import { getWithAuth, postWithAuth } from "@/lib/api-utils"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
+import { useApi, useMutation } from "@/hooks/use-api"
 
 interface Review {
   _id: string
@@ -42,11 +42,7 @@ interface ReviewListProps {
 }
 
 export function ReviewList({ restaurantId, isOwner = false }: ReviewListProps) {
-  const { user, token } = useAuth()
-  const { toast } = useToast()
-  const [reviews, setReviews] = useState<Review[]>([])
-  const [filteredReviews, setFilteredReviews] = useState<Review[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const { user } = useAuth()
   const [activeTab, setActiveTab] = useState("all")
   const [openReportDialog, setOpenReportDialog] = useState(false)
   const [reportReason, setReportReason] = useState("")
@@ -57,84 +53,65 @@ export function ReviewList({ restaurantId, isOwner = false }: ReviewListProps) {
   const [sortOrder, setSortOrder] = useState("desc")
   const [expandedImages, setExpandedImages] = useState<string | null>(null)
 
-  const fetchReviews = async () => {
-    setIsLoading(true)
-    try {
-      let reviewsData
+  // Fetch reviews with our custom hook
+  const {
+    data: reviews = [],
+    isLoading,
+    refetch,
+  } = useApi<Review[]>(
+    `/api/reviews?restaurantId=${restaurantId}&status=${isOwner ? "" : "approved"}&sortBy=${sortOption}&sortOrder=${sortOrder}`,
+    {
+      onSuccess: (data) => {
+        // Format the dates
+        return data.map((review: any) => ({
+          ...review,
+          date: new Date(review.date),
+        }))
+      },
+    },
+  )
 
-      // If user is the restaurant owner, get all reviews including pending ones
-      if (isOwner && user && token) {
-        reviewsData = await getWithAuth(`/api/reviews?restaurantId=${restaurantId}`)
-      } else {
-        // For normal users, only get approved reviews
-        const response = await fetch(
-          `/api/reviews?restaurantId=${restaurantId}&status=approved&sortBy=${sortOption}&sortOrder=${sortOrder}`,
-        )
-        reviewsData = await response.json()
-      }
-
-      // Format the dates
-      const formattedReviews = reviewsData.map((review: any) => ({
-        ...review,
-        date: new Date(review.date),
-      }))
-
-      setReviews(formattedReviews)
-      filterReviewsByTab(formattedReviews, activeTab)
-    } catch (error) {
-      console.error("Error fetching reviews:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load reviews",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  // Mutations
+  const { mutate: markHelpful } = useMutation(`/api/reviews/${selectedReview?._id}/helpful`)
+  const { mutate: reportReview } = useMutation(`/api/reviews/${selectedReview?._id}/report`)
+  const { mutate: moderateReview } = useMutation(`/api/reviews/${selectedReview?._id}/moderate`)
+  const { mutate: replyToReview } = useMutation(`/api/reviews/${replyingTo}`)
 
   // Filter reviews based on active tab
-  const filterReviewsByTab = (reviewsList: Review[], tab: string) => {
-    let filtered
+  const getFilteredReviews = () => {
+    let filtered = [...reviews]
 
-    switch (tab) {
+    switch (activeTab) {
       case "recent":
-        filtered = [...reviewsList].sort((a, b) => b.date.getTime() - a.date.getTime())
+        filtered = [...filtered].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         break
       case "highest":
-        filtered = [...reviewsList].sort((a, b) => b.rating - a.rating)
+        filtered = [...filtered].sort((a, b) => b.rating - a.rating)
         break
       case "lowest":
-        filtered = [...reviewsList].sort((a, b) => a.rating - b.rating)
+        filtered = [...filtered].sort((a, b) => a.rating - b.rating)
         break
       case "helpful":
-        filtered = [...reviewsList].sort((a, b) => b.helpful - a.helpful)
+        filtered = [...filtered].sort((a, b) => b.helpful - a.helpful)
         break
       case "pending":
-        filtered = reviewsList.filter((review) => review.status === "pending")
+        filtered = filtered.filter((review) => review.status === "pending")
         break
       case "approved":
-        filtered = reviewsList.filter((review) => review.status === "approved")
+        filtered = filtered.filter((review) => review.status === "approved")
         break
       case "rejected":
-        filtered = reviewsList.filter((review) => review.status === "rejected")
+        filtered = filtered.filter((review) => review.status === "rejected")
         break
       default:
-        filtered = reviewsList
+        // Keep the default sorting
+        break
     }
 
-    setFilteredReviews(filtered)
+    return filtered
   }
 
-  useEffect(() => {
-    if (restaurantId) {
-      fetchReviews()
-    }
-  }, [restaurantId, sortOption, sortOrder])
-
-  useEffect(() => {
-    filterReviewsByTab(reviews, activeTab)
-  }, [activeTab, reviews])
+  const filteredReviews = getFilteredReviews()
 
   const handleTabChange = (value: string) => {
     setActiveTab(value)
@@ -149,44 +126,17 @@ export function ReviewList({ restaurantId, isOwner = false }: ReviewListProps) {
   }
 
   const handleMarkHelpful = async (reviewId: string) => {
-    if (!user || !token) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to mark reviews as helpful",
-        variant: "destructive",
-      })
+    if (!user) {
       return
     }
 
-    try {
-      await postWithAuth(`/api/reviews/${reviewId}/helpful`, {})
-
-      // Update the review in the local state
-      setReviews((prev) =>
-        prev.map((review) => (review._id === reviewId ? { ...review, helpful: review.helpful + 1 } : review)),
-      )
-
-      toast({
-        title: "Success",
-        description: "Review marked as helpful",
-      })
-    } catch (error: any) {
-      console.error("Error marking review as helpful:", error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to mark review as helpful",
-        variant: "destructive",
-      })
-    }
+    setSelectedReview(reviews.find((r) => r._id === reviewId) || null)
+    await markHelpful({})
+    refetch()
   }
 
   const handleReportClick = (review: Review) => {
-    if (!user || !token) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to report reviews",
-        variant: "destructive",
-      })
+    if (!user) {
       return
     }
 
@@ -197,54 +147,18 @@ export function ReviewList({ restaurantId, isOwner = false }: ReviewListProps) {
 
   const handleReportSubmit = async () => {
     if (!selectedReview || !reportReason.trim()) {
-      toast({
-        title: "Report Reason Required",
-        description: "Please provide a reason for reporting this review",
-        variant: "destructive",
-      })
       return
     }
 
-    try {
-      await postWithAuth(`/api/reviews/${selectedReview._id}/report`, {
-        reason: reportReason,
-      })
-
-      setOpenReportDialog(false)
-
-      toast({
-        title: "Report Submitted",
-        description: "Thank you for your report. It will be reviewed by our moderators.",
-      })
-    } catch (error: any) {
-      console.error("Error reporting review:", error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to report review",
-        variant: "destructive",
-      })
-    }
+    await reportReview({ reason: reportReason })
+    setOpenReportDialog(false)
+    refetch()
   }
 
   const handleModerateReview = async (reviewId: string, status: "approved" | "rejected") => {
-    try {
-      await postWithAuth(`/api/reviews/${reviewId}/moderate`, { status })
-
-      // Update the review in the local state
-      setReviews((prev) => prev.map((review) => (review._id === reviewId ? { ...review, status } : review)))
-
-      toast({
-        title: "Success",
-        description: `Review ${status === "approved" ? "approved" : "rejected"}`,
-      })
-    } catch (error: any) {
-      console.error("Error moderating review:", error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to moderate review",
-        variant: "destructive",
-      })
-    }
+    setSelectedReview(reviews.find((r) => r._id === reviewId) || null)
+    await moderateReview({ status })
+    refetch()
   }
 
   const handleReplyClick = (reviewId: string, existingReply?: string) => {
@@ -254,39 +168,13 @@ export function ReviewList({ restaurantId, isOwner = false }: ReviewListProps) {
 
   const handleSubmitReply = async () => {
     if (!replyingTo || !replyContent.trim()) {
-      toast({
-        title: "Reply Content Required",
-        description: "Please provide a reply",
-        variant: "destructive",
-      })
       return
     }
 
-    try {
-      await postWithAuth(`/api/reviews/${replyingTo}`, {
-        reply: replyContent,
-      })
-
-      // Update the review in the local state
-      setReviews((prev) =>
-        prev.map((review) => (review._id === replyingTo ? { ...review, reply: replyContent } : review)),
-      )
-
-      setReplyingTo(null)
-      setReplyContent("")
-
-      toast({
-        title: "Success",
-        description: "Reply submitted successfully",
-      })
-    } catch (error: any) {
-      console.error("Error submitting reply:", error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to submit reply",
-        variant: "destructive",
-      })
-    }
+    await replyToReview({ reply: replyContent })
+    setReplyingTo(null)
+    setReplyContent("")
+    refetch()
   }
 
   const handleExpandImage = (imageUrl: string) => {
@@ -330,9 +218,38 @@ export function ReviewList({ restaurantId, isOwner = false }: ReviewListProps) {
 
   if (isLoading) {
     return (
-      <div className="text-center py-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary mx-auto"></div>
-        <p className="mt-2 text-muted-foreground">Loading reviews...</p>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center mb-4">
+          <Skeleton className="h-6 w-40" />
+          <div className="flex items-center space-x-2">
+            <Skeleton className="h-9 w-32" />
+            <Skeleton className="h-9 w-9" />
+          </div>
+        </div>
+
+        <Skeleton className="h-10 w-full mb-6" />
+
+        {[...Array(3)].map((_, i) => (
+          <Card key={i}>
+            <CardContent className="p-4">
+              <div className="flex justify-between items-start mb-2">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-5 w-24" />
+              </div>
+              <Skeleton className="h-4 w-24 mb-3" />
+              <Skeleton className="h-4 w-full mb-2" />
+              <Skeleton className="h-4 w-full mb-2" />
+              <Skeleton className="h-4 w-3/4 mb-3" />
+              <div className="flex justify-between">
+                <div className="flex space-x-2">
+                  <Skeleton className="h-8 w-20" />
+                  <Skeleton className="h-8 w-20" />
+                </div>
+                <Skeleton className="h-8 w-20" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     )
   }

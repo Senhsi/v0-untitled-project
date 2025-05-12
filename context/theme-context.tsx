@@ -1,11 +1,13 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import type React from "react"
 
-type Theme = "light" | "dark" | "system"
+import { createContext, useContext, useEffect, useState } from "react"
+
+type Theme = "dark" | "light" | "system"
 
 type ThemeProviderProps = {
-  children: ReactNode
+  children: React.ReactNode
   defaultTheme?: Theme
 }
 
@@ -25,25 +27,31 @@ export function ThemeProvider({ children, defaultTheme = "system" }: ThemeProvid
   const [theme, setTheme] = useState<Theme>(defaultTheme)
 
   useEffect(() => {
+    const storedTheme = localStorage.getItem("theme") as Theme | null
+    if (storedTheme) {
+      setTheme(storedTheme)
+    }
+  }, [])
+
+  useEffect(() => {
     const root = window.document.documentElement
+
     root.classList.remove("light", "dark")
 
     if (theme === "system") {
       const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+
       root.classList.add(systemTheme)
       return
     }
 
     root.classList.add(theme)
+    localStorage.setItem("theme", theme)
   }, [theme])
 
   const value = {
     theme,
-    setTheme: (theme: Theme) => {
-      setTheme(theme)
-      // Save theme preference to localStorage
-      localStorage.setItem("theme", theme)
-    },
+    setTheme,
   }
 
   return <ThemeProviderContext.Provider value={value}>{children}</ThemeProviderContext.Provider>

@@ -1,102 +1,10 @@
 import { NextResponse } from "next/server"
 import { connectToDatabase, toObjectId } from "@/lib/db"
 import { verifyToken } from "@/lib/auth"
+import { emitToRestaurantOwner } from "@/lib/socket-server"
 
 export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const restaurantId = searchParams.get("restaurantId")
-    const customerId = searchParams.get("customerId")
-    const status = searchParams.get("status")
-    const sortBy = searchParams.get("sortBy") || "date" // "date", "rating", "helpful"
-    const sortOrder = searchParams.get("sortOrder") || "desc" // "asc", "desc"
-
-    // Validate input
-    if (!restaurantId && !customerId) {
-      return NextResponse.json({ error: "Either restaurantId or customerId is required" }, { status: 400 })
-    }
-
-    const { db } = await connectToDatabase()
-    const collection = db.collection("reviews")
-
-    // Build query
-    const query: any = {}
-    if (restaurantId) {
-      query.restaurantId = restaurantId
-    }
-    if (customerId) {
-      query.customerId = customerId
-    }
-    if (status) {
-      query.status = status
-    } else {
-      // By default only return approved reviews for public access
-      query.status = "approved"
-    }
-
-    // Check if request is authenticated and from restaurant owner
-    let isRestaurantOwner = false
-    const authHeader = request.headers.get("authorization")
-    if (authHeader) {
-      try {
-        const decoded = await verifyToken(authHeader)
-        if (decoded.userType === "restaurant" && restaurantId) {
-          // Check if this restaurant belongs to the user
-          const restaurantCollection = db.collection("restaurants")
-          const restaurant = await restaurantCollection.findOne({
-            _id: toObjectId(restaurantId),
-            ownerId: decoded.userId,
-          })
-
-          if (restaurant) {
-            isRestaurantOwner = true
-            // Restaurant owners can see all reviews for their restaurant
-            delete query.status
-          }
-        }
-      } catch (error) {
-        // Continue as unauthenticated if token verification fails
-      }
-    }
-
-    // Get reviews
-    let reviews
-
-    // Sort options
-    const sortOptions: any = {}
-    if (sortBy === "rating") {
-      sortOptions.rating = sortOrder === "asc" ? 1 : -1
-    } else if (sortBy === "helpful") {
-      sortOptions.helpful = sortOrder === "asc" ? 1 : -1
-    } else {
-      sortOptions.date = sortOrder === "asc" ? 1 : -1
-    }
-
-    reviews = await collection.find(query).sort(sortOptions).toArray()
-
-    // Transform _id to string and add user/restaurant details
-    const formattedReviews = await Promise.all(
-      reviews.map(async (review) => {
-        const userCollection = db.collection("users")
-        const restaurantCollection = db.collection("restaurants")
-
-        const customer = await userCollection.findOne({ _id: toObjectId(review.customerId) })
-        const restaurant = await restaurantCollection.findOne({ _id: toObjectId(review.restaurantId) })
-
-        return {
-          ...review,
-          _id: review._id.toString(),
-          customerName: customer ? customer.name : "Unknown Customer",
-          restaurantName: restaurant ? restaurant.name : "Unknown Restaurant",
-        }
-      }),
-    )
-
-    return NextResponse.json(formattedReviews)
-  } catch (error: any) {
-    console.error("Error fetching reviews:", error)
-    return NextResponse.json({ error: error.message || "Failed to fetch reviews" }, { status: 500 })
-  }
+  // Existing code...
 }
 
 export async function POST(request: Request) {
@@ -144,6 +52,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "You have already reviewed this restaurant" }, { status: 400 })
     }
 
+    // Get customer details
+    const userCollection = db.collection("users")
+    const customer = await userCollection.findOne({ _id: toObjectId(decoded.userId) })
+
     // Create review
     const review = {
       restaurantId,
@@ -159,8 +71,13 @@ export async function POST(request: Request) {
 
     const result = await reviewCollection.insertOne(review)
 
-    // Update restaurant rating only for approved reviews
-    // This will be updated when the review is approved
+    // Emit WebSocket event to restaurant owner
+    emitToRestaurantOwner(restaurant.ownerId, "new_review", {
+      ...review,
+      _id: result.insertedId.toString(),
+      restaurantName: restaurant.name,
+      customerName: customer ? customer.name : "Unknown Customer",
+    })
 
     return NextResponse.json(
       {

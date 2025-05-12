@@ -1,423 +1,294 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+
+import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Calendar, Clock, Users, Star, PlusCircle, ImageIcon } from "lucide-react"
 import { useAuth } from "@/context/auth-context"
 import { useToast } from "@/components/ui/use-toast"
-import { getWithAuth } from "@/lib/api-utils"
+import { useApi } from "@/hooks/use-api"
+import { Breadcrumb } from "@/components/breadcrumb"
+import { RealTimeActivity } from "@/components/real-time-activity"
+import { Skeleton } from "@/components/ui/skeleton"
+import { CalendarDays, Users, Star, Clock, TrendingUp, Utensils } from "lucide-react"
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const router = useRouter()
   const { toast } = useToast()
-  const [customerReservations, setCustomerReservations] = useState([])
-  const [restaurantReservations, setRestaurantReservations] = useState([])
-  const [favoriteRestaurants, setFavoriteRestaurants] = useState([])
-  const [restaurantReviews, setRestaurantReviews] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [restaurant, setRestaurant] = useState(null) // Added restaurant state
+  const [activeTab, setActiveTab] = useState("overview")
 
-  useEffect(() => {
-    // Fetch data based on user type
-    const fetchData = async () => {
-      setIsLoading(true)
-      try {
-        if (user?.userType === "customer") {
-          // Fetch customer reservations
-          const reservationsData = await getWithAuth("/api/reservations")
-          setCustomerReservations(reservationsData)
-
-          // Fetch favorite restaurants
-          const favoritesData = await getWithAuth("/api/favorites")
-          setFavoriteRestaurants(favoritesData)
-        } else if (user?.userType === "restaurant") {
-          // Fetch restaurant reservations
-          const reservationsData = await getWithAuth("/api/reservations")
-          setRestaurantReservations(reservationsData)
-
-          // Fetch restaurant reviews
-          const reviewsData = await getWithAuth(`/api/reviews?restaurantId=${user._id}`)
-          setRestaurantReviews(reviewsData)
-
-          // Fetch restaurant data
-          const restaurantData = await getWithAuth(`/api/restaurants/${user._id}`)
-          setRestaurant(restaurantData)
-        }
-      } catch (error) {
-        console.error("Error fetching dashboard data:", error)
+  // Fetch restaurant data if user is a restaurant owner
+  const {
+    data: restaurant,
+    isLoading: isLoadingRestaurant,
+    error: restaurantError,
+  } = useApi("/api/restaurants", {
+    requireAuth: true,
+    onSuccess: (data) => {
+      // If restaurant owner has no restaurant, redirect to create one
+      if (user?.userType === "restaurant" && (!data || data.length === 0)) {
         toast({
-          title: "Error",
-          description: "Failed to load dashboard data",
-          variant: "destructive",
+          title: "No Restaurant Found",
+          description: "Please create a restaurant profile first",
         })
-      } finally {
-        setIsLoading(false)
+        router.push("/dashboard/restaurant-profile")
       }
-    }
+      return data && data.length > 0 ? data[0] : null
+    },
+    onError: () => {},
+  })
 
-    if (user) {
-      fetchData()
-    }
-  }, [user, toast])
+  // Fetch reservations
+  const { data: reservations = [], isLoading: isLoadingReservations } = useApi("/api/reservations", {
+    requireAuth: true,
+    onError: () => {},
+  })
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-[50vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-      </div>
-    )
+  // Fetch reviews if user is a restaurant owner
+  const { data: reviews = [], isLoading: isLoadingReviews } = useApi(
+    restaurant ? `/api/reviews?restaurantId=${restaurant._id}` : "",
+    {
+      requireAuth: true,
+      onError: () => {},
+    },
+  )
+
+  // Fetch favorites if user is a customer
+  const { data: favorites = [], isLoading: isLoadingFavorites } = useApi("/api/favorites", {
+    requireAuth: true,
+    onError: () => {},
+  })
+
+  // Calculate stats
+  const pendingReservations = reservations.filter((r: any) => r.status === "pending").length
+  const confirmedReservations = reservations.filter((r: any) => r.status === "confirmed").length
+  const totalReviews = reviews.length
+  const averageRating = reviews.length
+    ? (reviews.reduce((sum: number, r: any) => sum + r.rating, 0) / reviews.length).toFixed(1)
+    : "N/A"
+
+  if (!user) {
+    return null // Will be redirected by middleware
   }
+
+  const isLoading = isLoadingRestaurant || isLoadingReservations || isLoadingReviews || isLoadingFavorites
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">
-          {user?.userType === "customer" ? "Customer Dashboard" : "Restaurant Dashboard"}
-        </h1>
-        <p className="text-muted-foreground">
-          {user?.userType === "customer"
-            ? "Manage your reservations, favorites, and reviews"
-            : "Manage your restaurant profile, reservations, and reviews"}
-        </p>
-      </div>
+      <Breadcrumb />
+      <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
 
-      {user?.userType === "customer" ? (
-        <Tabs defaultValue="reservations">
-          <TabsList className="mb-4">
-            <TabsTrigger value="reservations">My Reservations</TabsTrigger>
-            <TabsTrigger value="favorites">Favorite Restaurants</TabsTrigger>
-          </TabsList>
-          <TabsContent value="reservations">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {customerReservations.length > 0 ? (
-                customerReservations.map((reservation: any) => (
-                  <Card key={reservation._id}>
-                    <CardHeader className="pb-2">
-                      <CardTitle>{reservation.restaurantName}</CardTitle>
-                      <CardDescription>
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            reservation.status === "confirmed"
-                              ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                              : reservation.status === "cancelled"
-                                ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
-                                : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
-                          }`}
-                        >
-                          {reservation.status.charAt(0).toUpperCase() + reservation.status.slice(1)}
-                        </span>
-                      </CardDescription>
+      <Tabs defaultValue={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          {user.userType === "restaurant" && <TabsTrigger value="analytics">Analytics</TabsTrigger>}
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {isLoading ? (
+              // Skeleton loaders for stats
+              <>
+                {[...Array(4)].map((_, i) => (
+                  <Card key={i}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <Skeleton className="h-5 w-24" />
+                      <Skeleton className="h-4 w-4" />
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex items-center">
-                          <Calendar className="mr-2 h-4 w-4 text-muted-foreground" />
-                          <span>{new Date(reservation.date).toLocaleDateString()}</span>
-                        </div>
-                        <div className="flex items-center">
-                          <Clock className="mr-2 h-4 w-4 text-muted-foreground" />
-                          <span>{reservation.time}</span>
-                        </div>
-                        <div className="flex items-center">
-                          <Users className="mr-2 h-4 w-4 text-muted-foreground" />
-                          <span>
-                            {reservation.guests} {reservation.guests === 1 ? "guest" : "guests"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="mt-4 flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="flex-1"
-                          disabled={reservation.status !== "pending"}
-                        >
-                          Modify
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="flex-1"
-                          disabled={reservation.status === "cancelled"}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
+                      <Skeleton className="h-7 w-16 mb-1" />
+                      <Skeleton className="h-4 w-28" />
                     </CardContent>
                   </Card>
-                ))
-              ) : (
-                <div className="col-span-full text-center py-8">
-                  <p className="text-muted-foreground mb-4">You don't have any reservations yet</p>
-                  <Link href="/restaurants">
-                    <Button>Find Restaurants</Button>
-                  </Link>
-                </div>
-              )}
-              <Card className="flex flex-col items-center justify-center p-6">
-                <div className="mb-4 rounded-full bg-primary/10 p-3">
-                  <Calendar className="h-6 w-6 text-primary" />
-                </div>
-                <h3 className="mb-2 text-xl font-medium">Book a Table</h3>
-                <p className="mb-4 text-center text-sm text-muted-foreground">
-                  Find and book your next dining experience
-                </p>
-                <Link href="/restaurants">
-                  <Button>Find Restaurants</Button>
-                </Link>
-              </Card>
-            </div>
-          </TabsContent>
-          <TabsContent value="favorites">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {favoriteRestaurants.length > 0 ? (
-                favoriteRestaurants.map((favorite: any) => (
-                  <Card key={favorite._id}>
-                    <CardHeader>
-                      <CardTitle>{favorite.restaurant?.name || "Restaurant"}</CardTitle>
-                      <CardDescription>{favorite.restaurant?.cuisine || "Various Cuisine"}</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center mb-4">
-                        <Star className="h-5 w-5 fill-primary text-primary mr-1" />
-                        <span>{favorite.restaurant?.rating || "N/A"}</span>
-                      </div>
-                      <div className="flex space-x-2">
-                        <Link href={`/restaurants/${favorite.restaurantId}`} className="flex-1">
-                          <Button variant="outline" className="w-full">
-                            View
-                          </Button>
-                        </Link>
-                        <Link href={`/restaurants/${favorite.restaurantId}#reservation`} className="flex-1">
-                          <Button className="w-full">Reserve</Button>
-                        </Link>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              ) : (
-                <div className="col-span-full text-center py-8">
-                  <p className="text-muted-foreground mb-4">You don't have any favorite restaurants yet</p>
-                  <Link href="/restaurants">
-                    <Button>Explore Restaurants</Button>
-                  </Link>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
-      ) : (
-        <Tabs defaultValue="overview">
-          <TabsList className="mb-4">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="reservations">Upcoming Reservations</TabsTrigger>
-            <TabsTrigger value="reviews">Recent Reviews</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="overview">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Reservations</CardTitle>
-                  <CardDescription>Manage your upcoming reservations</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{restaurantReservations.length}</div>
-                  <p className="text-sm text-muted-foreground">Upcoming reservations</p>
-                </CardContent>
-                <CardFooter>
-                  <Link href="/dashboard/reservations" className="w-full">
-                    <Button variant="outline" className="w-full">
-                      View All
-                    </Button>
-                  </Link>
-                </CardFooter>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Menu</CardTitle>
-                  <CardDescription>Manage your restaurant menu</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{restaurant?.menu?.length || 0}</div>
-                  <p className="text-sm text-muted-foreground">Menu categories</p>
-                </CardContent>
-                <CardFooter>
-                  <Link href="/dashboard/menu" className="w-full">
-                    <Button variant="outline" className="w-full">
-                      Manage Menu
-                    </Button>
-                  </Link>
-                </CardFooter>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Reviews</CardTitle>
-                  <CardDescription>View and respond to customer reviews</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{restaurantReviews.length}</div>
-                  <p className="text-sm text-muted-foreground">Customer reviews</p>
-                </CardContent>
-                <CardFooter>
-                  <Link href="/dashboard/reviews" className="w-full">
-                    <Button variant="outline" className="w-full">
-                      View Reviews
-                    </Button>
-                  </Link>
-                </CardFooter>
-              </Card>
-
-              <Card className="md:col-span-2 lg:col-span-3">
-                <CardHeader>
-                  <CardTitle>Quick Actions</CardTitle>
-                  <CardDescription>Common tasks for restaurant management</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <Link href="/dashboard/menu/categories/new">
-                      <Button variant="outline" className="w-full h-24 flex flex-col items-center justify-center">
-                        <PlusCircle className="h-8 w-8 mb-2" />
-                        <span>Add Menu Category</span>
-                      </Button>
-                    </Link>
-                    <Link href="/dashboard/restaurant-profile">
-                      <Button variant="outline" className="w-full h-24 flex flex-col items-center justify-center">
-                        <Star className="h-8 w-8 mb-2" />
-                        <span>Update Profile</span>
-                      </Button>
-                    </Link>
-                    <Link href="/dashboard/images">
-                      <Button variant="outline" className="w-full h-24 flex flex-col items-center justify-center">
-                        <ImageIcon className="h-8 w-8 mb-2" />
-                        <span>Manage Images</span>
-                      </Button>
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="reservations">
-            <Card>
-              <CardHeader>
-                <CardTitle>Reservation Management</CardTitle>
-                <CardDescription>View and manage upcoming reservations for your restaurant</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {restaurantReservations.length > 0 ? (
-                  <div className="rounded-md border">
-                    <div className="grid grid-cols-6 border-b px-4 py-3 font-medium">
-                      <div>Customer</div>
-                      <div>Date</div>
-                      <div>Time</div>
-                      <div>Guests</div>
-                      <div>Status</div>
-                      <div className="text-right">Actions</div>
-                    </div>
-                    {restaurantReservations.map((reservation: any) => (
-                      <div
-                        key={reservation._id}
-                        className="grid grid-cols-6 items-center px-4 py-3 border-b last:border-0"
-                      >
-                        <div>{reservation.customerName}</div>
-                        <div>{new Date(reservation.date).toLocaleDateString()}</div>
-                        <div>{reservation.time}</div>
-                        <div>{reservation.guests}</div>
-                        <div>
-                          <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                              reservation.status === "confirmed"
-                                ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                                : reservation.status === "cancelled"
-                                  ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
-                                  : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
-                            }`}
-                          >
-                            {reservation.status.charAt(0).toUpperCase() + reservation.status.slice(1)}
-                          </span>
-                        </div>
-                        <div className="flex justify-end space-x-2">
-                          {reservation.status === "pending" && (
-                            <Button size="sm" variant="outline">
-                              Confirm
-                            </Button>
-                          )}
-                          <Button size="sm" variant="destructive" disabled={reservation.status === "cancelled"}>
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                {/* Stats cards based on user type */}
+                {user.userType === "restaurant" ? (
+                  // Restaurant owner stats
+                  <>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Pending Reservations</CardTitle>
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{pendingReservations}</div>
+                        <p className="text-xs text-muted-foreground">Awaiting confirmation</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Confirmed Reservations</CardTitle>
+                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{confirmedReservations}</div>
+                        <p className="text-xs text-muted-foreground">Upcoming bookings</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Total Reviews</CardTitle>
+                        <Star className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{totalReviews}</div>
+                        <p className="text-xs text-muted-foreground">Customer feedback</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Average Rating</CardTitle>
+                        <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{averageRating}</div>
+                        <p className="text-xs text-muted-foreground">Out of 5 stars</p>
+                      </CardContent>
+                    </Card>
+                  </>
                 ) : (
-                  <div className="text-center py-8">
-                    <p className="text-muted-foreground">You don't have any reservations yet</p>
-                  </div>
+                  // Customer stats
+                  <>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">My Reservations</CardTitle>
+                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{reservations.length}</div>
+                        <p className="text-xs text-muted-foreground">Total bookings</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Upcoming Reservations</CardTitle>
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">
+                          {
+                            reservations.filter((r: any) => r.status === "confirmed" && new Date(r.date) >= new Date())
+                              .length
+                          }
+                        </div>
+                        <p className="text-xs text-muted-foreground">Confirmed bookings</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Favorite Restaurants</CardTitle>
+                        <Utensils className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{favorites.length}</div>
+                        <p className="text-xs text-muted-foreground">Saved places</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">My Reviews</CardTitle>
+                        <Star className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">
+                          {reviews.filter((r: any) => r.customerId === user._id).length}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Submitted feedback</p>
+                      </CardContent>
+                    </Card>
+                  </>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </>
+            )}
+          </div>
 
-          <TabsContent value="reviews">
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Recent Activity */}
+            <RealTimeActivity />
+
+            {/* Recent Reservations */}
             <Card>
               <CardHeader>
-                <CardTitle>Customer Reviews</CardTitle>
-                <CardDescription>See what customers are saying about your restaurant</CardDescription>
+                <CardTitle>Recent Reservations</CardTitle>
+                <CardDescription>Your latest bookings</CardDescription>
               </CardHeader>
               <CardContent>
-                {restaurantReviews.length > 0 ? (
+                {isLoadingReservations ? (
                   <div className="space-y-4">
-                    {restaurantReviews.map((review: any) => (
-                      <div key={review._id} className="rounded-lg border p-4">
-                        <div className="flex justify-between mb-2">
-                          <div className="font-medium">{review.customerName}</div>
-                          <div className="text-sm text-muted-foreground">
-                            {new Date(review.date).toLocaleDateString()}
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex items-center gap-4">
+                        <Skeleton className="h-12 w-12 rounded-full" />
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-[200px]" />
+                          <Skeleton className="h-4 w-[150px]" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : reservations.length > 0 ? (
+                  <div className="space-y-4">
+                    {reservations.slice(0, 5).map((reservation: any) => (
+                      <div key={reservation._id} className="flex items-center gap-4">
+                        <div className="rounded-full p-2 bg-muted">
+                          <Users className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1 space-y-1">
+                          <p className="text-sm font-medium">
+                            {user.userType === "restaurant" ? reservation.customerName : reservation.restaurantName}
+                          </p>
+                          <div className="flex items-center text-xs text-muted-foreground">
+                            <span>
+                              {new Date(reservation.date).toLocaleDateString()} at {reservation.time}
+                            </span>
+                            <span className="mx-2">•</span>
+                            <span>{reservation.guests} guests</span>
+                            <span className="mx-2">•</span>
+                            <Badge
+                              variant={
+                                reservation.status === "confirmed"
+                                  ? "default"
+                                  : reservation.status === "pending"
+                                    ? "outline"
+                                    : "destructive"
+                              }
+                              className="text-[10px] h-5"
+                            >
+                              {reservation.status}
+                            </Badge>
                           </div>
                         </div>
-                        <div className="flex items-center mb-2">
-                          {[...Array(5)].map((_, i) => (
-                            <Star
-                              key={i}
-                              className={`h-4 w-4 ${
-                                i < review.rating ? "fill-primary text-primary" : "text-muted-foreground"
-                              }`}
-                            />
-                          ))}
-                        </div>
-                        <p className="text-sm">{review.comment}</p>
-                        {review.reply ? (
-                          <div className="mt-2 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-                            <p className="text-sm font-medium">Your reply:</p>
-                            <p className="text-sm">{review.reply}</p>
-                          </div>
-                        ) : (
-                          <div className="mt-2">
-                            <Button size="sm" variant="outline">
-                              Reply
-                            </Button>
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-8">
-                    <p className="text-muted-foreground">You don't have any reviews yet</p>
-                  </div>
+                  <div className="text-center py-6 text-muted-foreground">No reservations found</div>
                 )}
               </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        {user.userType === "restaurant" && (
+          <TabsContent value="analytics" className="space-y-4">
+            {/* Analytics content */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Restaurant Analytics</CardTitle>
+                <CardDescription>Performance metrics for your restaurant</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-6 text-muted-foreground">Analytics dashboard coming soon...</div>
+              </CardContent>
+            </Card>
           </TabsContent>
-        </Tabs>
-      )}
+        )}
+      </Tabs>
     </div>
   )
 }

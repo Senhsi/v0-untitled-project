@@ -10,16 +10,14 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Search, MapPin, Star, Filter, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { useToast } from "@/components/ui/use-toast"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useApi } from "@/hooks/use-api"
 import type { Restaurant } from "@/lib/db"
 
 export default function RestaurantsPage() {
-  const { toast } = useToast()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([])
   const [filteredRestaurants, setFilteredRestaurants] = useState<Restaurant[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState(searchParams.get("search") || "")
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState({
@@ -32,6 +30,9 @@ export default function RestaurantsPage() {
     hasVeganOptions: searchParams.get("vegan") === "true",
     hasVegetarianOptions: searchParams.get("vegetarian") === "true",
   })
+
+  // Fetch restaurants using our custom hook
+  const { data: restaurants, isLoading, error, refetch } = useApi<Restaurant[]>("/api/restaurants")
 
   // Update URL with filters
   useEffect(() => {
@@ -56,33 +57,10 @@ export default function RestaurantsPage() {
     }
   }, [filters, searchTerm, router])
 
+  // Apply filters when restaurants data changes
   useEffect(() => {
-    const fetchRestaurants = async () => {
-      setIsLoading(true)
-      try {
-        const response = await fetch("/api/restaurants")
-        if (!response.ok) {
-          throw new Error("Failed to fetch restaurants")
-        }
-        const data = await response.json()
-        setRestaurants(data)
-        setFilteredRestaurants(data)
-      } catch (error) {
-        console.error("Error fetching restaurants:", error)
-        toast({
-          title: "Error",
-          description: "Failed to load restaurants",
-          variant: "destructive",
-        })
-      } finally {
-        setIsLoading(false)
-      }
-    }
+    if (!restaurants) return
 
-    fetchRestaurants()
-  }, [toast])
-
-  useEffect(() => {
     // Apply filters and search
     let results = [...restaurants]
 
@@ -154,7 +132,7 @@ export default function RestaurantsPage() {
   }
 
   // Get unique cuisines for filter dropdown
-  const cuisines = [...new Set(restaurants.map((r) => r.cuisine))].sort()
+  const cuisines = restaurants ? [...new Set(restaurants.map((r) => r.cuisine))].sort() : []
 
   // Count active filters
   const activeFilterCount = Object.values(filters).filter((value) => value).length
@@ -322,8 +300,32 @@ export default function RestaurantsPage() {
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {[...Array(6)].map((_, i) => (
+            <Card key={i} className="overflow-hidden">
+              <div className="aspect-video w-full">
+                <Skeleton className="h-full w-full" />
+              </div>
+              <CardHeader>
+                <Skeleton className="h-6 w-3/4" />
+                <Skeleton className="h-4 w-1/2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-4 w-full mb-2" />
+                <Skeleton className="h-4 w-full mb-2" />
+                <Skeleton className="h-4 w-3/4" />
+              </CardContent>
+              <CardFooter>
+                <Skeleton className="h-10 w-full" />
+              </CardFooter>
+            </Card>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="text-center py-12">
+          <h3 className="text-lg font-medium mb-2">Error loading restaurants</h3>
+          <p className="text-muted-foreground mb-4">{error.message}</p>
+          <Button onClick={() => refetch()}>Try Again</Button>
         </div>
       ) : (
         <>

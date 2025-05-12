@@ -1,45 +1,52 @@
 import { getServerSession } from "next-auth/next"
 import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import { headers } from "next/headers"
+import type { NextRequest } from "next/server"
 import { verifyToken } from "./auth"
 
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || ""
+
 // Get the authenticated user from the request
-export async function getAuthUser(req: Request) {
-  // First, try to get the user from the Authorization header
-  const authHeader = headers().get("authorization")
+export async function getAuthUser(req: NextRequest | Request) {
+  try {
+    // First try to get the token from the Authorization header
+    const authHeader = req.headers.get("authorization")
 
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1]
-    try {
-      const decoded = await verifyToken(token)
-      return {
-        userId: decoded.userId,
-        email: decoded.email,
-        userType: decoded.userType,
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1]
+      try {
+        const decoded = await verifyToken(token)
+        return {
+          userId: decoded.userId,
+          email: decoded.email,
+          userType: decoded.userType,
+        }
+      } catch (error) {
+        // If token verification fails, continue to check session
       }
-    } catch (error) {
-      // If token verification fails, continue to check session
     }
-  }
 
-  // If no Authorization header or token verification failed, try to get the user from the session
-  const session = await getServerSession(authOptions)
+    // If we're in a server context, try to get the session
+    if (typeof window === "undefined") {
+      try {
+        const session = await getServerSession(authOptions)
 
-  if (session?.user) {
-    return {
-      userId: session.user.id,
-      email: session.user.email || "",
-      userType: session.user.userType,
+        if (session?.user) {
+          return {
+            userId: session.user.id,
+            email: session.user.email || "",
+            userType: session.user.userType,
+          }
+        }
+      } catch (error) {
+        // If session retrieval fails, continue
+      }
     }
+
+    // If no user is found, throw an error
+    throw new Error("Unauthorized")
+  } catch (error) {
+    throw new Error("Unauthorized")
   }
-
-  // If no user is found, throw an error
-  throw new Error("Unauthorized")
-}
-
-// Check if the user is authorized to access a resource
-export function isAuthorized(user: { userId: string; userType: string }, resourceOwnerId: string) {
-  return user.userId === resourceOwnerId || user.userType === "admin"
 }
 
 // Helper function to handle API errors
@@ -56,99 +63,82 @@ export function handleApiError(error: any) {
   }
 }
 
+// Check if the user is authorized to access a resource
+export function isAuthorized(user: { userId: string; userType: string }, resourceOwnerId: string) {
+  return user.userId === resourceOwnerId || user.userType === "admin"
+}
+
 export async function fetchWithAuth(url: string, options: any = {}) {
-  const authHeader = headers().get("authorization")
+  let token: any = null
 
-  const defaultHeaders = {
+  // Try to get token from next-auth if in a server component
+  if (typeof window === "undefined") {
+    try {
+      const session = await getServerSession(authOptions)
+      token = session?.user?.accessToken
+    } catch (error) {
+      // Ignore errors and continue
+    }
+  } else {
+    // In client components, get token from localStorage
+    token = localStorage.getItem("token")
+  }
+
+  const headers = {
     "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
   }
 
-  const mergedOptions = {
+  // Don't set Content-Type for FormData
+  if (options.body instanceof FormData) {
+    delete headers["Content-Type"]
+  }
+
+  const config = {
     ...options,
-    headers: {
-      ...defaultHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
+    headers,
   }
 
-  const response = await fetch(url, mergedOptions)
-  return response
+  const res = await fetch(`${BASE_URL}${url}`, config)
+
+  // Handle unauthorized errors
+  if (res.status === 401 && typeof window !== "undefined") {
+    localStorage.removeItem("token")
+    localStorage.removeItem("user")
+    window.location.href = "/login"
+    throw new Error("Unauthorized")
+  }
+
+  return res
 }
 
 export async function postWithAuth(url: string, body: any) {
-  const authHeader = headers().get("authorization")
-
-  const defaultHeaders = {
-    "Content-Type": "application/json",
-  }
-
-  const options = {
+  const res = await fetchWithAuth(url, {
     method: "POST",
-    headers: {
-      ...defaultHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-    body: JSON.stringify(body),
-  }
-
-  const response = await fetch(url, options)
-  return await response.json()
-}
-
-export async function getWithAuth(url: string) {
-  const authHeader = headers().get("authorization")
-
-  const defaultHeaders = {
-    "Content-Type": "application/json",
-  }
-
-  const options = {
-    method: "GET",
-    headers: {
-      ...defaultHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-  }
-
-  const response = await fetch(url, options)
-  return await response.json()
+    body: body instanceof FormData ? body : JSON.stringify(body),
+  })
+  return await res.json()
 }
 
 export async function putWithAuth(url: string, body: any) {
-  const authHeader = headers().get("authorization")
-
-  const defaultHeaders = {
-    "Content-Type": "application/json",
-  }
-
-  const options = {
+  const res = await fetchWithAuth(url, {
     method: "PUT",
-    headers: {
-      ...defaultHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-    body: JSON.stringify(body),
-  }
+    body: body instanceof FormData ? body : JSON.stringify(body),
+  })
+  return await res.json()
+}
 
-  const response = await fetch(url, options)
-  return await response.json()
+export async function getWithAuth(url: string) {
+  const res = await fetchWithAuth(url, {
+    method: "GET",
+  })
+  return await res.json()
 }
 
 export async function deleteWithAuth(url: string) {
-  const authHeader = headers().get("authorization")
-
-  const defaultHeaders = {
-    "Content-Type": "application/json",
-  }
-
-  const options = {
+  const res = await fetchWithAuth(url, {
     method: "DELETE",
-    headers: {
-      ...defaultHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-  }
-
-  const response = await fetch(url, options)
-  return response
+  })
+  return res
 }
